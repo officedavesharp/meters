@@ -57,6 +57,11 @@
     "max": 2048,
     "step": 1
   },
+  "blacklistJson": {
+    "type": "textarea",
+    "label": "Blacklisted Names JSON (ignore non-chat actors)",
+    "value": "[\n  \"starting soon\",\n  \"be right back\",\n  \"brb\",\n  \"intermission\",\n  \"live scene\",\n  \"gameplay\",\n  \"ending\",\n  \"stream ending\",\n  \"offline\"\n]"
+  },
   "classAssignmentsJson": {
     "type": "textarea",
     "label": "Class Assignments JSON (name -> class)",

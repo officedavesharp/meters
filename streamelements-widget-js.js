@@ -41,11 +41,29 @@ const config = {
   defaultClass: "WARRIOR",
   classAssignments: {},
   classIconAtlasUrl: "https://raw.githubusercontent.com/officedavesharp/meters/main/assets/classes_small_alpha.png",
-  classIconAtlasSize: 256
+  classIconAtlasSize: 256,
+  /**
+   * Prevent non-chat actor names (especially OBS scene labels) from polluting
+   * the chat DPS meter. This can be extended through fieldData.blacklistJson.
+   */
+  blacklistedNames: [
+    "starting soon",
+    "be right back",
+    "brb",
+    "intermission",
+    "live scene",
+    "gameplay",
+    "ending",
+    "stream ending",
+    "offline"
+  ]
 };
+const FALLBACK_CLASS_ICON_ATLAS_URL =
+  "https://raw.githubusercontent.com/officedavesharp/meters/main/assets/classes_small_alpha.png";
 
 const meterStore = new Map();
 let renderIntervalId = null;
+let validatedAtlasUrl = FALLBACK_CLASS_ICON_ATLAS_URL;
 
 function safeJsonParse(raw, fallback) {
   if (raw === null || raw === undefined) return fallback;
@@ -57,6 +75,29 @@ function safeJsonParse(raw, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function isLikelyImageUrl(url) {
+  const value = String(url || "").trim();
+  if (!value) return false;
+  if (value.startsWith("data:image/")) return true;
+  return /\.(png|jpg|jpeg|webp|gif)(\?.*)?$/i.test(value);
+}
+
+/**
+ * Validate the icon atlas URL at runtime and fall back automatically if
+ * StreamElements field data still has an old/invalid URL.
+ */
+function resolveAtlasUrl(urlCandidate) {
+  const preferred = isLikelyImageUrl(urlCandidate) ? String(urlCandidate).trim() : FALLBACK_CLASS_ICON_ATLAS_URL;
+  const probe = new Image();
+  probe.onload = () => {
+    validatedAtlasUrl = preferred;
+  };
+  probe.onerror = () => {
+    validatedAtlasUrl = FALLBACK_CLASS_ICON_ATLAS_URL;
+  };
+  probe.src = preferred;
 }
 
 function normalizeClassName(className) {
@@ -283,7 +324,6 @@ function resolveChatActorName(event) {
     event?.user,
     event?.from,
     event?.author,
-    event?.channel,
     event?.data?.displayName,
     event?.data?.display_name,
     event?.data?.nick,
@@ -322,6 +362,57 @@ function resolveChatActorName(event) {
   }
 
   return "Unknown";
+}
+
+/**
+ * Check whether a resolved actor name should be ignored.
+ * This blocks scene names and other non-user identities from entering the meter.
+ */
+function isBlacklistedActorName(name) {
+  const raw = String(name || "").trim();
+  if (!raw) return true;
+  const normalized = raw.toLowerCase();
+
+  if (config.blacklistedNames.includes(normalized)) return true;
+
+  /**
+   * OBS scene naming patterns often include words like "scene", "starting soon",
+   * or "brb". These heuristics guard against accidental scene event ingestion.
+   */
+  if (normalized.includes(" scene")) return true;
+  if (normalized.startsWith("scene ")) return true;
+  if (normalized.includes("starting soon")) return true;
+  if (normalized.includes("be right back")) return true;
+
+  return false;
+}
+
+/**
+ * Ensure an event actually looks like a chat message payload.
+ * Some non-chat events can still include "chat" or "message" in listener/type
+ * metadata; requiring textual chat content prevents those false positives.
+ */
+function hasRealChatMessageContent(event) {
+  const textCandidates = [
+    event?.message,
+    event?.text,
+    event?.msg,
+    event?.content,
+    event?.body,
+    event?.data?.message,
+    event?.data?.text,
+    event?.data?.msg,
+    event?.data?.content,
+    event?.data?.body
+  ];
+
+  for (let i = 0; i < textCandidates.length; i += 1) {
+    const candidate = textCandidates[i];
+    if (typeof candidate !== "string") continue;
+    if (candidate.trim().length > 0) return true;
+  }
+
+  return false;
 }
 
 function buildMeterRowElement() {
@@ -363,7 +454,7 @@ function updateMeterRowElement(rowEl, rowData, idx, maxRecent) {
   }
 
   if (iconEl) {
-    iconEl.style.backgroundImage = `url('${config.classIconAtlasUrl}')`;
+    iconEl.style.backgroundImage = `url('${validatedAtlasUrl}')`;
     iconEl.style.backgroundPosition = `-${iconLeft}px -${iconTop}px`;
     iconEl.style.backgroundSize = `${atlasSize}px ${atlasSize}px`;
   }
@@ -404,12 +495,21 @@ function extractMessageEventData(detail) {
   const listener = (detail?.listener || "").toString().toLowerCase();
   const eventName = (event?.type || event?.event || "").toString().toLowerCase();
   const mergedType = `${listener} ${eventName}`;
-  const isLikelyMessageEvent =
-    mergedType.includes("message") ||
-    mergedType.includes("chat");
-  if (!isLikelyMessageEvent) return { isLikelyMessageEvent: false, viewerName: "", amount: 0 };
+
+  /**
+   * Keep broad type detection, but require real message text to avoid
+   * accidental ingestion of OBS/scene/system events.
+   */
+  const isLikelyMessageEvent = mergedType.includes("message") || mergedType.includes("chat");
+  const hasChatText = hasRealChatMessageContent(event);
+  if (!isLikelyMessageEvent || !hasChatText) {
+    return { isLikelyMessageEvent: false, viewerName: "", amount: 0 };
+  }
 
   const viewerName = resolveChatActorName(event);
+  if (isBlacklistedActorName(viewerName)) {
+    return { isLikelyMessageEvent: false, viewerName: "", amount: 0 };
+  }
 
   const amount =
     Number(event?.amount) ||
@@ -434,9 +534,11 @@ function extractMessageEventDataFromSessionEvent(sessionEvent) {
     mergedType.includes("message") ||
     mergedType.includes("chat");
   if (!isLikelyMessageEvent) return null;
+  if (!hasRealChatMessageContent(event)) return null;
 
   const viewerName = resolveChatActorName(event);
   if (!viewerName || viewerName === "Unknown") return null;
+  if (isBlacklistedActorName(viewerName)) return null;
 
   const amount =
     Number(event?.amount) ||
@@ -503,6 +605,15 @@ window.addEventListener("onWidgetLoad", (obj) => {
   if (fieldData.defaultClass) config.defaultClass = normalizeClassName(fieldData.defaultClass);
   if (fieldData.classIconAtlasUrl) config.classIconAtlasUrl = String(fieldData.classIconAtlasUrl);
   if (fieldData.classIconAtlasSize) config.classIconAtlasSize = Math.max(32, Number(fieldData.classIconAtlasSize) || 256);
+  if (fieldData.blacklistJson) {
+    const parsedBlacklist = safeJsonParse(fieldData.blacklistJson, []);
+    if (Array.isArray(parsedBlacklist)) {
+      config.blacklistedNames = parsedBlacklist
+        .map((entry) => String(entry || "").trim().toLowerCase())
+        .filter(Boolean);
+    }
+  }
+  resolveAtlasUrl(config.classIconAtlasUrl);
 
   const parsedClassMap = safeJsonParse(fieldData.classAssignmentsJson, {});
   const normalizedMap = {};
