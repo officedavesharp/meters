@@ -1,0 +1,70 @@
+{
+  "title": {
+    "type": "text",
+    "label": "Meter Title",
+    "value": "Chat DPS"
+  },
+  "windowMinutes": {
+    "type": "number",
+    "label": "Recent Window (minutes)",
+    "value": 30,
+    "min": 1,
+    "max": 1440,
+    "step": 1
+  },
+  "maxRows": {
+    "type": "number",
+    "label": "Max Rows",
+    "value": 8,
+    "min": 1,
+    "max": 8,
+    "step": 1
+  },
+  "showRank": {
+    "type": "checkbox",
+    "label": "Show Rank Number",
+    "value": true
+  },
+  "defaultClass": {
+    "type": "dropdown",
+    "label": "Default WoW Class",
+    "value": "WARRIOR",
+    "options": {
+      "DEATHKNIGHT": "Death Knight",
+      "DEMONHUNTER": "Demon Hunter",
+      "DRUID": "Druid",
+      "HUNTER": "Hunter",
+      "MAGE": "Mage",
+      "MONK": "Monk",
+      "PALADIN": "Paladin",
+      "PRIEST": "Priest",
+      "ROGUE": "Rogue",
+      "SHAMAN": "Shaman",
+      "WARLOCK": "Warlock",
+      "WARRIOR": "Warrior"
+    }
+  },
+  "classIconAtlasUrl": {
+    "type": "text",
+    "label": "Class Icon Atlas URL",
+    "value": "https://raw.githubusercontent.com/officedavesharp/meters/main/assets/classes_small_alpha.png"
+  },
+  "classIconAtlasSize": {
+    "type": "number",
+    "label": "Class Icon Atlas Size (px)",
+    "value": 256,
+    "min": 32,
+    "max": 2048,
+    "step": 1
+  },
+  "classAssignmentsJson": {
+    "type": "textarea",
+    "label": "Class Assignments JSON (name -> class)",
+    "value": "{}"
+  },
+  "initialLeaderboardJson": {
+    "type": "textarea",
+    "label": "Initial Leaderboard JSON (optional)",
+    "value": "[]"
+  }
+}

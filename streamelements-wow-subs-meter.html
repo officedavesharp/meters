@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WoW Sub Meter</title>
+  <style>
+    :root {
+      /* Overlay dimensions requested by user. */
+      --meter-width: 215px;
+      --meter-height: 276px;
+
+      /* Each row is exactly 33px high as requested. */
+      --row-height: 33px;
+
+      /* Layout colors inspired by the Details! meter look in WoW. */
+      --meter-bg: rgba(29, 19, 9, 0.92);
+      --meter-border: #5e4b27;
+      --header-bg: #2e451f;
+      --header-border: #748f4d;
+      --text-main: #f2f2e7;
+      --text-muted: #d0ccba;
+      --bar-bg: rgba(20, 13, 6, 0.7);
+      --row-separator: rgba(255, 255, 255, 0.1);
+      --glow: rgba(255, 234, 163, 0.15);
+      --font-stack: "Friz Quadrata TT", "Segoe UI", "Trebuchet MS", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: var(--meter-width);
+      height: var(--meter-height);
+      overflow: hidden;
+      background: transparent;
+      font-family: var(--font-stack);
+    }
+
+    /* Main frame that visually matches a compact fantasy UI panel. */
+    .meter {
+      width: var(--meter-width);
+      height: var(--meter-height);
+      background: linear-gradient(180deg, rgba(54, 39, 20, 0.95), var(--meter-bg));
+      border: 1px solid var(--meter-border);
+      box-shadow:
+        inset 0 0 0 1px rgba(255, 230, 165, 0.05),
+        0 0 10px var(--glow);
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Header consumes one row-height slot in the panel. */
+    .meter__header {
+      height: var(--row-height);
+      border-bottom: 1px solid var(--header-border);
+      background: linear-gradient(180deg, #5f7f3d 0%, var(--header-bg) 100%);
+      color: #ffffff;
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      gap: 6px;
+      padding: 0 8px;
+      text-shadow: 0 1px 0 rgba(0, 0, 0, 0.8);
+      font-weight: 700;
+      font-size: 12px;
+      letter-spacing: 0.2px;
+    }
+
+    .meter__title {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .meter__header-stat {
+      font-size: 11px;
+      color: #f9f3cb;
+      opacity: 0.95;
+    }
+
+    /* Body area can show at most 7 rows: (276 - 33 header) / 33 row = 7.36 => 7 rows. */
+    .meter__body {
+      height: calc(var(--meter-height) - var(--row-height));
+      overflow: hidden;
+    }
+
+    .meter-row {
+      position: relative;
+      height: var(--row-height);
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      padding: 0 8px;
+      border-bottom: 1px solid var(--row-separator);
+      color: var(--text-main);
+      font-size: 12px;
+      text-shadow: 0 1px 0 rgba(0, 0, 0, 0.75);
+      background: rgba(0, 0, 0, 0.22);
+      overflow: hidden;
+      isolation: isolate;
+    }
+
+    .meter-row:last-child {
+      border-bottom: none;
+    }
+
+    /* Bar fill is width-scaled by recent-14-day subs and tinted with WoW class color. */
+    .meter-row__bar {
+      position: absolute;
+      inset: 3px 4px;
+      width: 0;
+      background: var(--bar-bg);
+      border-radius: 2px;
+      z-index: -1;
+      overflow: hidden;
+    }
+
+    .meter-row__bar::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0));
+      opacity: 0.25;
+      pointer-events: none;
+    }
+
+    .meter-row__name {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding-right: 4px;
+    }
+
+    .meter-row__recent,
+    .meter-row__total {
+      min-width: 30px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .meter-row__recent {
+      color: #ffffff;
+      font-weight: 700;
+      min-width: 26px;
+    }
+
+    .meter-row__total {
+      color: var(--text-muted);
+      min-width: 34px;
+      margin-left: 8px;
+    }
+
+    .meter-empty {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 12px;
+      letter-spacing: 0.3px;
+      text-shadow: 0 1px 0 rgba(0, 0, 0, 0.9);
+      text-align: center;
+      padding: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="meter">
+    <div class="meter__header">
+      <div class="meter__title" id="meterTitle">Recent Subs</div>
+      <div class="meter__header-stat" id="headerRecent">14D: 0</div>
+      <div class="meter__header-stat" id="headerTotal">ALL: 0</div>
+    </div>
+    <div class="meter__body" id="meterBody">
+      <div class="meter-empty">Waiting for sub events...</div>
+    </div>
+  </div>
+
+  <script>
+    /**
+     * WoW class colors (hex) from common UI conventions.
+     * These are used both for text tint and row bar fills.
+     */
+    const WOW_CLASS_COLORS = {
+      DEATHKNIGHT: "#C41E3A",
+      DEMONHUNTER: "#A330C9",
+      DRUID: "#FF7C0A",
+      HUNTER: "#AAD372",
+      MAGE: "#3FC7EB",
+      MONK: "#00FF98",
+      PALADIN: "#F48CBA",
+      PRIEST: "#FFFFFF",
+      ROGUE: "#FFF468",
+      SHAMAN: "#0070DD",
+      WARLOCK: "#8788EE",
+      WARRIOR: "#C69B6D"
+    };
+
+    /**
+     * Default widget config.
+     * In StreamElements you can map these from fieldData.
+     */
+    const config = {
+      title: "1. Vanity",
+      daysWindow: 14,
+      maxRows: 7,
+      showRank: true,
+      defaultClass: "WARRIOR",
+      /**
+       * Optional JSON map you can supply in StreamElements:
+       * {
+       *   "viewerName1": "MAGE",
+       *   "viewerName2": "PRIEST"
+       * }
+       */
+      classAssignments: {}
+    };
+
+    /**
+     * This is the persistent in-memory leaderboard store.
+     * Key is lowercase viewer name.
+     */
+    const meterStore = new Map();
+
+    /**
+     * Parse JSON safely and return fallback on any invalid input.
+     */
+    function safeJsonParse(raw, fallback) {
+      if (!raw || typeof raw !== "string") return fallback;
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" ? parsed : fallback;
+      } catch {
+        return fallback;
+      }
+    }
+
+    /**
+     * Returns normalized class key if valid, otherwise default class.
+     */
+    function normalizeClassName(className) {
+      if (!className || typeof className !== "string") return config.defaultClass;
+      const normalized = className.trim().toUpperCase();
+      return WOW_CLASS_COLORS[normalized] ? normalized : config.defaultClass;
+    }
+
+    /**
+     * Determine a viewer's class.
+     * Current implementation expects manual mapping via config.classAssignments.
+     */
+    function getViewerClass(viewerName) {
+      const classMapKey = String(viewerName || "").toLowerCase();
+      const assigned = config.classAssignments[classMapKey];
+      return normalizeClassName(assigned);
+    }
+
+    /**
+     * Keep only events inside rolling N-day window for ranking metric.
+     */
+    function trimOldEvents(entry) {
+      const now = Date.now();
+      const windowMs = config.daysWindow * 24 * 60 * 60 * 1000;
+      entry.events = entry.events.filter((ts) => now - ts <= windowMs);
+    }
+
+    /**
+     * Add sub events to the store.
+     * amount defaults to 1 for normal sub; gifted bundles can be > 1.
+     */
+    function registerSub(viewerName, amount, timestampMs) {
+      const key = String(viewerName || "Unknown").toLowerCase();
+      const displayName = String(viewerName || "Unknown");
+      const safeAmount = Number.isFinite(amount) && amount > 0 ? Math.floor(amount) : 1;
+      const eventTs = Number.isFinite(timestampMs) ? timestampMs : Date.now();
+
+      if (!meterStore.has(key)) {
+        meterStore.set(key, {
+          viewerName: displayName,
+          wowClass: getViewerClass(displayName),
+          totalSubs: 0,
+          events: []
+        });
+      }
+
+      const entry = meterStore.get(key);
+      entry.totalSubs += safeAmount;
+
+      for (let i = 0; i < safeAmount; i += 1) {
+        entry.events.push(eventTs);
+      }
+
+      trimOldEvents(entry);
+    }
+
+    /**
+     * Build sorted rows by recent 14-day sub count.
+     * Secondary sort by all-time total, then alphabetical.
+     */
+    function getSortedRows() {
+      const rows = [];
+      meterStore.forEach((entry) => {
+        trimOldEvents(entry);
+        rows.push({
+          viewerName: entry.viewerName,
+          wowClass: normalizeClassName(entry.wowClass),
+          recentSubs: entry.events.length,
+          totalSubs: entry.totalSubs
+        });
+      });
+
+      rows.sort((a, b) => {
+        if (b.recentSubs !== a.recentSubs) return b.recentSubs - a.recentSubs;
+        if (b.totalSubs !== a.totalSubs) return b.totalSubs - a.totalSubs;
+        return a.viewerName.localeCompare(b.viewerName);
+      });
+
+      return rows.slice(0, config.maxRows);
+    }
+
+    /**
+     * Render rows and panel header totals.
+     */
+    function renderMeter() {
+      const body = document.getElementById("meterBody");
+      const headerRecent = document.getElementById("headerRecent");
+      const headerTotal = document.getElementById("headerTotal");
+      const title = document.getElementById("meterTitle");
+
+      title.textContent = config.title;
+
+      const rows = getSortedRows();
+      const maxRecent = Math.max(1, ...rows.map((r) => r.recentSubs));
+      const sumRecent = rows.reduce((sum, row) => sum + row.recentSubs, 0);
+      let sumTotal = 0;
+      meterStore.forEach((entry) => {
+        sumTotal += entry.totalSubs;
+      });
+
+      headerRecent.textContent = `14D: ${sumRecent}`;
+      headerTotal.textContent = `ALL: ${sumTotal}`;
+
+      if (!rows.length) {
+        body.innerHTML = '<div class="meter-empty">Waiting for sub events...</div>';
+        return;
+      }
+
+      body.innerHTML = rows
+        .map((row, idx) => {
+          const fillPct = Math.max(0, Math.min(100, (row.recentSubs / maxRecent) * 100));
+          const color = WOW_CLASS_COLORS[row.wowClass] || WOW_CLASS_COLORS[config.defaultClass];
+          const rankLabel = config.showRank ? `${idx + 1}. ` : "";
+
+          return `
+            <div class="meter-row" data-class="${row.wowClass}">
+              <div class="meter-row__bar" style="width:${fillPct}%; background:${color}44;"></div>
+              <div class="meter-row__name" style="color:${color};">${rankLabel}${escapeHtml(row.viewerName)}</div>
+              <div class="meter-row__recent">${row.recentSubs}</div>
+              <div class="meter-row__total">${row.totalSubs}</div>
+            </div>
+          `;
+        })
+        .join("");
+    }
+
+    /**
+     * Minimal HTML escaping to keep rendered text safe.
+     */
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    /**
+     * Parse StreamElements-like sub event payloads.
+     * This intentionally supports multiple naming patterns because
+     * event payloads can vary between test events and live events.
+     */
+    function extractSubEventData(detail) {
+      const event = detail?.event || {};
+      const listener = detail?.listener || "";
+
+      const amount =
+        Number(event.amount) ||
+        Number(event.bulkGifted) ||
+        Number(event.gifted) ||
+        1;
+
+      const viewerName =
+        event.name ||
+        event.username ||
+        event.displayName ||
+        event.sender ||
+        "Unknown";
+
+      const eventType = String(listener).toLowerCase();
+      const isLikelySubEvent =
+        eventType.includes("subscriber") ||
+        eventType.includes("subscription") ||
+        eventType.includes("sub");
+
+      return { isLikelySubEvent, viewerName, amount };
+    }
+
+    /**
+     * StreamElements lifecycle: receives user field settings and optional
+     * session data when the widget boots.
+     */
+    window.addEventListener("onWidgetLoad", (obj) => {
+      const fieldData = obj?.detail?.fieldData || {};
+
+      if (fieldData.title) config.title = String(fieldData.title);
+      if (fieldData.daysWindow) config.daysWindow = Math.max(1, Number(fieldData.daysWindow) || 14);
+      if (fieldData.maxRows) config.maxRows = Math.max(1, Number(fieldData.maxRows) || 7);
+      if (fieldData.showRank !== undefined) config.showRank = Boolean(fieldData.showRank);
+      if (fieldData.defaultClass) config.defaultClass = normalizeClassName(fieldData.defaultClass);
+
+      /**
+       * Expecting optional class map JSON in fieldData.classAssignmentsJson.
+       * Keys should be lowercase viewer names; values are class names.
+       */
+      const parsedClassMap = safeJsonParse(fieldData.classAssignmentsJson, {});
+      const normalizedMap = {};
+      Object.entries(parsedClassMap).forEach(([viewer, wowClass]) => {
+        normalizedMap[String(viewer).toLowerCase()] = normalizeClassName(wowClass);
+      });
+      config.classAssignments = normalizedMap;
+
+      /**
+       * Optional bootstrap leaderboard data.
+       * Format example:
+       * [
+       *   { "name": "viewerA", "recent14d": 4, "total": 18, "class": "MAGE" }
+       * ]
+       */
+      const initialRows = safeJsonParse(fieldData.initialLeaderboardJson, []);
+      if (Array.isArray(initialRows)) {
+        initialRows.forEach((row) => {
+          const name = row?.name || row?.viewerName;
+          const recent = Number(row?.recent14d || row?.recent || 0);
+          const total = Number(row?.total || 0);
+          const wowClass = normalizeClassName(row?.class || row?.wowClass || config.defaultClass);
+          if (!name) return;
+
+          const key = String(name).toLowerCase();
+          const entry = {
+            viewerName: String(name),
+            wowClass,
+            totalSubs: Number.isFinite(total) && total > 0 ? Math.floor(total) : 0,
+            events: []
+          };
+
+          const recentCount = Number.isFinite(recent) && recent > 0 ? Math.floor(recent) : 0;
+          const now = Date.now();
+          for (let i = 0; i < recentCount; i += 1) {
+            entry.events.push(now - i * 1000);
+          }
+
+          meterStore.set(key, entry);
+        });
+      }
+
+      renderMeter();
+    });
+
+    /**
+     * StreamElements event hook for live updates.
+     */
+    window.addEventListener("onEventReceived", (obj) => {
+      const detail = obj?.detail;
+      const { isLikelySubEvent, viewerName, amount } = extractSubEventData(detail);
+      if (!isLikelySubEvent) return;
+
+      registerSub(viewerName, amount, Date.now());
+      renderMeter();
+    });
+
+    /**
+     * Local demo mode for quick browser preview/testing outside StreamElements.
+     * It auto-fills fake data only when no StreamElements API events are present.
+     */
+    setTimeout(() => {
+      if (meterStore.size > 0) return;
+      const demo = [
+        ["Vanity", 14, "HUNTER"],
+        ["Stormpike", 11, "WARRIOR"],
+        ["Mendleaf", 8, "DRUID"],
+        ["Frostshard", 7, "MAGE"],
+        ["Holylight", 5, "PALADIN"],
+        ["Sneakstab", 4, "ROGUE"],
+        ["Felweaver", 3, "WARLOCK"]
+      ];
+      demo.forEach(([name, count, wowClass], idx) => {
+        config.classAssignments[String(name).toLowerCase()] = wowClass;
+        registerSub(name, count, Date.now() - idx * 3600 * 1000);
+      });
+      renderMeter();
+    }, 300);
+  </script>
+</body>
+</html>
